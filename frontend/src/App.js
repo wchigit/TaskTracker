@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
+import './styles.css'; // Import the CSS file
 
 const API_URL = process.env.REACT_APP_API_URL.startsWith('http')
   ? process.env.REACT_APP_API_URL
@@ -30,26 +31,30 @@ function App() {
   };
 
   return (
-    <div>
-      <h1>Task Tracker</h1>
-      <input
-        type="text"
-        placeholder="Title"
-        value={title}
-        onChange={e => setTitle(e.target.value)}
-      />
-      <input
-        type="text"
-        placeholder="Description"
-        value={description}
-        onChange={e => setDescription(e.target.value)}
-      />
-      <button onClick={createTask}>Create Task</button>
-      <ul>
+    <div className="app-container">
+      <h1 className="app-title">Task Tracker</h1>
+      <div className="input-container">
+        <input
+          type="text"
+          placeholder="Title"
+          value={title}
+          onChange={e => setTitle(e.target.value)}
+          className="input-field"
+        />
+        <input
+          type="text"
+          placeholder="Description"
+          value={description}
+          onChange={e => setDescription(e.target.value)}
+          className="input-field"
+        />
+        <button onClick={createTask} className="create-button">Create Task</button>
+      </div>
+      <ul className="task-list">
         {tasks.map(task => (
-          <li key={task.id}>
-            {task.title} - {task.description}
-            <button onClick={() => deleteTask(task.id)}>Delete</button>
+          <li key={task.id} className="task-item">
+            <span className="task-title">{task.title}</span> - <span className="task-description">{task.description}</span>
+            <button onClick={() => deleteTask(task.id)} className="delete-button">Delete</button>
           </li>
         ))}
       </ul>
