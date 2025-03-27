@@ -1,0 +1,136 @@
+name: Build and Deploy to Azure
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+env:
+  BACKEND_IMAGE_NAME: tasktracker-backend
+  FRONTEND_IMAGE_NAME: tasktracker-frontend
+  RESOURCE_GROUP: rg-myenv
+  LOCATION: eastus
+
+jobs:
+  deploy-infra:
+    runs-on: ubuntu-latest
+    outputs:
+      registry_endpoint: ${{ steps.get-acr.outputs.registry_endpoint }}
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Log in to Azure
+        uses: azure/login@v1
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          enable-AzPSSession: true
+
+      - name: Deploy Bicep infrastructure
+        id: deploy-bicep
+        run: |
+          az deployment sub create \
+            --location ${{ env.LOCATION }} \
+            --template-file ./infra/main.bicep \
+            --parameters ./infra/main.parameters.json \
+            --parameters \
+              location=${{ env.LOCATION }} \
+              resourceGroupName=${{ env.RESOURCE_GROUP }}
+
+      - name: Get ACR details
+        id: get-acr
+        run: |
+          ACR_ENDPOINT=$(az deployment sub show \
+            --name main \
+            --query properties.outputs.AZURE_CONTAINER_REGISTRY_ENDPOINT.value \
+            -o tsv)
+          echo "registry_endpoint=$ACR_ENDPOINT" >> $GITHUB_OUTPUT
+
+  build:
+    needs: deploy-infra
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Log in to Azure
+        uses: azure/login@v1
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Log in to Azure Container Registry
+        run: |
+          az acr login --name $(echo "${{ needs.deploy-infra.outputs.registry_endpoint }}" | cut -d'.' -f1)
+
+      - name: Build and push backend image
+        uses: docker/build-push-action@v4
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile
+          push: true
+          tags: ${{ needs.deploy-infra.outputs.registry_endpoint }}/${{ env.BACKEND_IMAGE_NAME }}:${{ github.sha }}
+
+      - name: Build and push frontend image
+        uses: docker/build-push-action@v4
+        with:
+          context: ./frontend
+          file: ./frontend/Dockerfile.prod
+          push: true
+          tags: ${{ needs.deploy-infra.outputs.registry_endpoint }}/${{ env.FRONTEND_IMAGE_NAME }}:${{ github.sha }}
+
+  deploy-apps:
+    needs: [deploy-infra, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Log in to Azure
+        uses: azure/login@v1
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          enable-AzPSSession: true
+
+      - name: Get Container Apps names
+        id: get-apps
+        run: |
+          SUBSCRIPTION_ID=$(az account show --query id -o tsv)
+          RESOURCE_TOKEN=$(echo -n "$SUBSCRIPTION_ID:${{ env.LOCATION }}:${{ env.RESOURCE_GROUP }}" | sha1sum | cut -c1-8)
+          echo "backend_name=backend${RESOURCE_TOKEN}" >> $GITHUB_ENV
+          echo "frontend_name=frontend${RESOURCE_TOKEN}" >> $GITHUB_ENV
+
+      - name: Update Backend Container App
+        run: |
+          az containerapp update \
+            --name ${{ env.backend_name }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --image ${{ needs.deploy-infra.outputs.registry_endpoint }}/${{ env.BACKEND_IMAGE_NAME }}:${{ github.sha }}
+
+      - name: Update Frontend Container App
+        run: |
+          az containerapp update \
+            --name ${{ env.frontend_name }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --image ${{ needs.deploy-infra.outputs.registry_endpoint }}/${{ env.FRONTEND_IMAGE_NAME }}:${{ github.sha }}
+
+      - name: Get application URLs
+        run: |
+          BACKEND_URL=$(az containerapp show \
+            --name ${{ env.backend_name }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --query properties.configuration.ingress.fqdn -o tsv)
+          FRONTEND_URL=$(az containerapp show \
+            --name ${{ env.frontend_name }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --query properties.configuration.ingress.fqdn -o tsv)
+          
+          echo "Backend URL: https://$BACKEND_URL"
+          echo "Frontend URL: https://$FRONTEND_URL"
