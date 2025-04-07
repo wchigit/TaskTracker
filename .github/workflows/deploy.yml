@@ -44,7 +44,7 @@ jobs:
       - name: Azure Dev Deploy
         run: |
           azd auth login --client-id "${{ secrets.AZURE_CLIENT_ID }}" --client-secret "${{ secrets.AZURE_CLIENT_SECRET }}" --tenant-id "${{ secrets.AZURE_TENANT_ID }}"
-          azd env refresh -e "$Env:AZURE_ENV_NAME" --no-prompt
+          azd env refresh -e "$AZURE_ENV_NAME" --no-prompt
           azd config set defaults.subscription "${{ secrets.AZURE_SUBSCRIPTION_ID }}" --no-prompt
-          azd config set defaults.location "$Env:AZURE_LOCATION" --no-prompt
+          azd config set defaults.location "$AZURE_LOCATION" --no-prompt
           azd up --no-prompt
