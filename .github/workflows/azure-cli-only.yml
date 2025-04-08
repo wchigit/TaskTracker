@@ -34,16 +34,28 @@ jobs:
       - name: Deploy Bicep infrastructure
         id: deploy-bicep
         run: |
-          # Deploy infrastructure and capture outputs
-          DEPLOYMENT_OUTPUT=$(az deployment sub create \
-            --name deployment-${{ github.run_number }} \
+          # Deploy infrastructure
+          DEPLOYMENT_NAME="deployment-${{ github.run_number }}"
+          
+          az deployment sub create \
+            --name $DEPLOYMENT_NAME \
             --location ${{ env.LOCATION }} \
             --template-file infra/main.bicep \
             --parameters \
               location=${{ env.LOCATION }} \
-              resourceGroupName=${{ env.RESOURCE_GROUP }} \
+              resourceGroupName=${{ env.RESOURCE_GROUP }}
+          
+          # Wait for deployment to complete
+          echo "Waiting for deployment to complete..."
+          az deployment sub wait \
+            --created \
+            --name $DEPLOYMENT_NAME
+          
+          # Get deployment outputs
+          DEPLOYMENT_OUTPUT=$(az deployment sub show \
+            --name $DEPLOYMENT_NAME \
             --query properties.outputs -o json)
-
+          
           # Extract values from deployment output
           ACR_ENDPOINT=$(echo $DEPLOYMENT_OUTPUT | jq -r .AZURE_CONTAINER_REGISTRY_ENDPOINT.value)
           echo "ACR_NAME=$(echo $ACR_ENDPOINT | cut -d'.' -f1)" >> $GITHUB_ENV
