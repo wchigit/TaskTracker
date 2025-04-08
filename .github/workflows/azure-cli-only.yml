@@ -54,11 +54,6 @@ jobs:
           echo "BACKEND_APP_ID=$BACKEND_APP_ID" >> $GITHUB_ENV
           echo "FRONTEND_APP_ID=$FRONTEND_APP_ID" >> $GITHUB_ENV
 
-      - name: Wait for ACR provisioning
-        run: |
-          echo "Waiting for ACR to be ready..."
-          az acr wait --name ${{ env.ACR_NAME }} --resource-group ${{ env.RESOURCE_GROUP }} --created
-
       - name: Build and push backend image
         run: |
           # Get MongoDB connection string from Key Vault using managed identity
