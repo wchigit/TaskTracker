@@ -11,7 +11,6 @@ param keyVaultName string = 'kv${resourceToken}'
 param containerAppEnvName string = 'env${resourceToken}'
 param containerRegistryName string = 'acr${resourceToken}'
 
-
 // Deploy an Azure Resource Group
 
 resource resourceGroup 'Microsoft.Resources/resourceGroups@2021-04-01' = {
