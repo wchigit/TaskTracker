@@ -67,8 +67,8 @@ jobs:
             --query properties.outputs -o json)
           
           # Extract values from deployment output
-          ACR_ENDPOINT=$(echo $DEPLOYMENT_OUTPUT | jq -r .containerRegistryBackendId.value)
-          echo "ACR_NAME=$(echo $ACR_ENDPOINT | cut -d'/' | tail -n 1)" >> $GITHUB_ENV
+          ACR_ENDPOINT=$(echo $DEPLOYMENT_OUTPUT | jq -r .azurE_CONTAINER_REGISTRY_ENDPOINT.value)
+          echo "ACR_NAME=$(echo $ACR_ENDPOINT | cut -d'.' -f1)" >> $GITHUB_ENV
           
           # Store container app IDs for later use
           BACKEND_APP_ID=$(echo $DEPLOYMENT_OUTPUT | jq -r .containerAppBackendId.value)
