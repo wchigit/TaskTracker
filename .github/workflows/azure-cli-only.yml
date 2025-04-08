@@ -1,0 +1,114 @@
+name: Azure CLI Only Deploy
+
+on:
+  push:
+    branches: [ "master" ]
+  pull_request:
+    branches: [ "master" ]
+  workflow_dispatch:
+
+env:
+  AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+  RESOURCE_GROUP: rg-${{ vars.AZURE_ENV_NAME }}
+  LOCATION: eastus
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Azure login
+        uses: azure/login@v1
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy Bicep infrastructure
+        id: deploy-bicep
+        run: |
+          # Deploy infrastructure and capture outputs
+          DEPLOYMENT_OUTPUT=$(az deployment sub create \
+            --name deployment-${{ github.run_number }} \
+            --location ${{ env.LOCATION }} \
+            --template-file infra/main.bicep \
+            --parameters \
+              location=${{ env.LOCATION }} \
+              resourceGroupName=${{ env.RESOURCE_GROUP }} \
+            --query properties.outputs -o json)
+
+          # Extract values from deployment output
+          ACR_ENDPOINT=$(echo $DEPLOYMENT_OUTPUT | jq -r .AZURE_CONTAINER_REGISTRY_ENDPOINT.value)
+          echo "ACR_NAME=$(echo $ACR_ENDPOINT | cut -d'.' -f1)" >> $GITHUB_ENV
+          
+          # Store container app IDs for later use
+          BACKEND_APP_ID=$(echo $DEPLOYMENT_OUTPUT | jq -r .containerAppBackendId.value)
+          FRONTEND_APP_ID=$(echo $DEPLOYMENT_OUTPUT | jq -r .containerAppFrontendId.value)
+          echo "BACKEND_APP_ID=$BACKEND_APP_ID" >> $GITHUB_ENV
+          echo "FRONTEND_APP_ID=$FRONTEND_APP_ID" >> $GITHUB_ENV
+
+      - name: Wait for ACR provisioning
+        run: |
+          echo "Waiting for ACR to be ready..."
+          az acr wait --name ${{ env.ACR_NAME }} --resource-group ${{ env.RESOURCE_GROUP }} --created
+
+      - name: Build and push backend image
+        run: |
+          # Get MongoDB connection string from Key Vault using managed identity
+          MONGO_CONNECTION=$(az containerapp secret show \
+            --id ${{ env.BACKEND_APP_ID }} \
+            --secret cosmosmongodb0-connstr \
+            --query value -o tsv)
+
+          az acr build \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --registry ${{ env.ACR_NAME }} \
+            --image backend:${{ github.sha }} \
+            --build-arg MONGO_URL="$MONGO_CONNECTION" \
+            ./backend
+
+      - name: Build and push frontend image
+        run: |
+          # Get backend URL from Container App
+          BACKEND_URL=$(az containerapp show \
+            --ids ${{ env.BACKEND_APP_ID }} \
+            --query "properties.configuration.ingress.fqdn" -o tsv)
+
+          az acr build \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --registry ${{ env.ACR_NAME }} \
+            --image frontend:${{ github.sha }} \
+            --build-arg REACT_APP_API_URL="https://$BACKEND_URL" \
+            ./frontend
+
+      - name: Update container apps
+        run: |
+          # Update backend using resource ID
+          az containerapp update \
+            --ids ${{ env.BACKEND_APP_ID }} \
+            --image ${{ env.ACR_NAME }}.azurecr.io/backend:${{ github.sha }}
+
+          # Update frontend using resource ID
+          az containerapp update \
+            --ids ${{ env.FRONTEND_APP_ID }} \
+            --image ${{ env.ACR_NAME }}.azurecr.io/frontend:${{ github.sha }}
+
+      - name: Get deployment URLs
+        run: |
+          BACKEND_URL=$(az containerapp show \
+            --ids ${{ env.BACKEND_APP_ID }} \
+            --query "properties.configuration.ingress.fqdn" -o tsv)
+          FRONTEND_URL=$(az containerapp show \
+            --ids ${{ env.FRONTEND_APP_ID }} \
+            --query "properties.configuration.ingress.fqdn" -o tsv)
+          
+          echo "Application URLs:"
+          echo "Backend API: https://$BACKEND_URL"
+          echo "Frontend App: https://$FRONTEND_URL"
