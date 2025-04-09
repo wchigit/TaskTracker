@@ -1,4 +1,4 @@
-name: Deploy to Azure
+name: Deploy to Azure agent
 
 on:
   push:
@@ -14,7 +14,7 @@ permissions:
   contents: read
 
 env:
-  ENVIRONMENT: production
+  ENVIRONMENT: production-agent
 
 jobs:
   deploy:
