@@ -79,12 +79,12 @@ jobs:
         run: |
           # Update backend container app
           az containerapp update \
-            -n backend* \
+            -n $(az containerapp list -g ${{ env.RESOURCE_GROUP }} --query "[?contains(name, 'frontend')].name" -o tsv) \
             -g ${{ env.RESOURCE_GROUP }} \
             --image ${{ env.ACR_LOGIN_SERVER }}/tasktracker-backend:${{ github.sha }}
 
           # Update frontend container app
           az containerapp update \
-            -n frontend* \
+            -n $(az containerapp list -g ${{ env.RESOURCE_GROUP }} --query "[?contains(name, 'backend')].name" -o tsv) \
             -g ${{ env.RESOURCE_GROUP }} \
             --image ${{ env.ACR_LOGIN_SERVER }}/tasktracker-frontend:${{ github.sha }}
