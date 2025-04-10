@@ -79,12 +79,12 @@ jobs:
         run: |
           # Update backend container app
           az containerapp update \
-            -n backend$(echo ${{ env.RESOURCE_GROUP }} | cut -d'-' -f2) \
+            -n backend* \
             -g ${{ env.RESOURCE_GROUP }} \
             --image ${{ env.ACR_LOGIN_SERVER }}/tasktracker-backend:${{ github.sha }}
 
           # Update frontend container app
           az containerapp update \
-            -n frontend$(echo ${{ env.RESOURCE_GROUP }} | cut -d'-' -f2) \
+            -n frontend* \
             -g ${{ env.RESOURCE_GROUP }} \
             --image ${{ env.ACR_LOGIN_SERVER }}/tasktracker-frontend:${{ github.sha }}
