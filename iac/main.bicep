@@ -183,5 +183,5 @@ output containerAppFrontendId string = containerAppFrontendDeployment.outputs.id
 output cosmosMongoDb0Id string = cosmosMongoDb0Deployment.outputs.id
 output keyVaultId string = keyVaultDeployment.outputs.id
 output containerRegistryBackendId string = containerRegistry.outputs.id
-output AZURE_CONTAINER_REGISTRY_ENDPOINT string = containerRegistry.outputs.loginServer
+output containerRegistryEndpoint string = containerRegistry.outputs.loginServer
 
