@@ -1,0 +1,86 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  BACKEND_IMAGE_NAME: backend
+  FRONTEND_IMAGE_NAME: frontend
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    environment: dev
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Azure login
+      uses: azure/login@v1
+      with:
+        client-id: ${{ secrets.AZURE_CLIENT_ID }}
+        tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+        subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+    - name: Build backend image
+      run: docker build -t ${{ env.BACKEND_IMAGE_NAME }} ./backend
+
+    - name: Build frontend image
+      run: docker build -f ./frontend/Dockerfile.prod -t ${{ env.FRONTEND_IMAGE_NAME }} ./frontend
+
+    - name: Deploy infrastructure
+      id: deploy-infra
+      run: |
+        az deployment sub create \
+          --location eastus \
+          --template-file ./iac/main.bicep \
+          --parameters location=eastus \
+          --name task-tracker-deployment
+        
+        az deployment sub wait \
+          --name task-tracker-deployment \
+          --created
+
+        # Get the ACR endpoint from deployment outputs
+        ACR_ENDPOINT=$(az deployment sub show --name task-tracker-deployment --query properties.outputs.AZURE_CONTAINER_REGISTRY_ENDPOINT.value -o tsv)
+        echo "ACR_ENDPOINT=$ACR_ENDPOINT" >> $GITHUB_ENV
+        
+        # Get resource group name
+        RG_NAME=$(az group list --query "[?contains(name, 'rg-myenv')].name" -o tsv)
+        echo "RG_NAME=$RG_NAME" >> $GITHUB_ENV
+
+    - name: ACR login
+      run: |
+        az acr login --name $(echo ${{ env.ACR_ENDPOINT }} | cut -d'.' -f1)
+
+    - name: Tag and push images
+      run: |
+        # Tag images
+        docker tag ${{ env.BACKEND_IMAGE_NAME }} ${{ env.ACR_ENDPOINT }}/${{ env.BACKEND_IMAGE_NAME }}:${{ github.sha }}
+        docker tag ${{ env.FRONTEND_IMAGE_NAME }} ${{ env.ACR_ENDPOINT }}/${{ env.FRONTEND_IMAGE_NAME }}:${{ github.sha }}
+        
+        # Push images
+        docker push ${{ env.ACR_ENDPOINT }}/${{ env.BACKEND_IMAGE_NAME }}:${{ github.sha }}
+        docker push ${{ env.ACR_ENDPOINT }}/${{ env.FRONTEND_IMAGE_NAME }}:${{ github.sha }}
+
+    - name: Update Container Apps
+      run: |
+        # Update backend Container App
+        az containerapp update \
+          --name backend$(echo ${{ env.RG_NAME }} | cut -d'-' -f2) \
+          --resource-group ${{ env.RG_NAME }} \
+          --image ${{ env.ACR_ENDPOINT }}/${{ env.BACKEND_IMAGE_NAME }}:${{ github.sha }}
+
+        # Update frontend Container App
+        az containerapp update \
+          --name frontend$(echo ${{ env.RG_NAME }} | cut -d'-' -f2) \
+          --resource-group ${{ env.RG_NAME }} \
+          --image ${{ env.ACR_ENDPOINT }}/${{ env.FRONTEND_IMAGE_NAME }}:${{ github.sha }}
