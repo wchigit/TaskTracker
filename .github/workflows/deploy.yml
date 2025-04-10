@@ -1,0 +1,77 @@
+name: Deploy to Azure
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  ENVIRONMENT: dev
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: dev
+    
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Azure login
+        uses: azure/login@v1
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Build images
+        run: |
+          docker build -t tasktracker-frontend:${{ github.sha }} ./frontend
+          docker build -t tasktracker-backend:${{ github.sha }} ./backend
+
+      - name: Deploy infrastructure
+        run: |
+          echo "Creating resource group and deploying infrastructure..."
+          deploymentOutput=$(az deployment sub create \
+            --name tasktracker-${{ github.sha }} \
+            --location eastus \
+            --template-file ./iac/main.bicep \
+            --parameters location=eastus resourceGroupName=rg-tasktracker-${{ env.ENVIRONMENT }} \
+            --query properties.outputs)
+          
+          echo "Waiting for deployment to complete..."
+          az deployment sub wait --name tasktracker-${{ github.sha }} --created
+          
+          # Extract values from deployment output
+          echo "REGISTRY_SERVER=$(echo $deploymentOutput | jq -r .containerRegistryEndpoint.value)" >> $GITHUB_ENV
+          echo "REGISTRY_NAME=$(echo $REGISTRY_SERVER | cut -d'.' -f1)" >> $GITHUB_ENV
+
+      - name: Login to Azure Container Registry
+        run: |
+          az acr login --name ${{ env.REGISTRY_NAME }}
+
+      - name: Tag and push images
+        run: |
+          docker tag tasktracker-frontend:${{ github.sha }} ${{ env.REGISTRY_SERVER }}/tasktracker-frontend:${{ github.sha }}
+          docker tag tasktracker-backend:${{ github.sha }} ${{ env.REGISTRY_SERVER }}/tasktracker-backend:${{ github.sha }}
+          
+          docker push ${{ env.REGISTRY_SERVER }}/tasktracker-frontend:${{ github.sha }}
+          docker push ${{ env.REGISTRY_SERVER }}/tasktracker-backend:${{ github.sha }}
+
+      - name: Deploy applications
+        run: |
+          # Update container apps with new image versions
+          az containerapp update \
+            --name $(az containerapp list -g rg-tasktracker-${{ env.ENVIRONMENT }} --query "[?contains(name, 'frontend')].name" -o tsv) \
+            --resource-group rg-tasktracker-${{ env.ENVIRONMENT }} \
+            --image ${{ env.REGISTRY_SERVER }}/tasktracker-frontend:${{ github.sha }}
+
+          az containerapp update \
+            --name $(az containerapp list -g rg-tasktracker-${{ env.ENVIRONMENT }} --query "[?contains(name, 'backend')].name" -o tsv) \
+            --resource-group rg-tasktracker-${{ env.ENVIRONMENT }} \
+            --image ${{ env.REGISTRY_SERVER }}/tasktracker-backend:${{ github.sha }}
