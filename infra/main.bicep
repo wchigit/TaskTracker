@@ -53,8 +53,7 @@ module containerAppBackendDeployment 'containerapp.bicep' = {
 		targetPort: 80 
 		containerAppEnvId: containerAppEnvId
 		identityType: 'SystemAssigned'
-		containerRegistryName: containerRegistryName  
-		tags: {'azd-service-name': 'backend'}
+		containerRegistryName: containerRegistryName 
 	}
 	dependsOn: [
 		containerAppEnv
@@ -73,8 +72,7 @@ module containerAppFrontendDeployment 'containerapp.bicep' = {
 		targetPort: 80 
 		containerAppEnvId: containerAppEnvId
 		identityType: 'SystemAssigned'
-		containerRegistryName: containerRegistryName  
-		tags: {'azd-service-name': 'frontend'}
+		containerRegistryName: containerRegistryName 
 	}
 	dependsOn: [
 		containerAppEnv
@@ -146,8 +144,7 @@ module containerAppSettingsBackendDeployment 'containerapp.bicep' = {
 				name: 'AZURE_KEYVAULT_RESOURCEENDPOINT'
 				value: keyVaultDeployment.outputs.endpoint
 			}
-		] 
-		tags: {'azd-service-name': 'backend'}
+		]
 	}
 	dependsOn: [
 		cosmosMongoDb0Deployment
@@ -172,8 +169,7 @@ module containerAppSettingsFrontendDeployment 'containerapp.bicep' = {
 				name: 'REACT_APP_API_URL'
 				value: containerAppBackendDeployment.outputs.requestUrl
 			}
-		] 
-		tags: {'azd-service-name': 'frontend'}
+		]
 	}
 	dependsOn: [
 		containerAppBackendDeployment
