@@ -50,7 +50,7 @@ jobs:
           script: |
             const issueTitle = `Run "${{ github.run_id }}" of workflow "${{ github.workflow }} failed"`;
             const issueBody = `Workflow failed log:\n${{ env.workflow_log }}`;
-            const response = await github.issues.create({
+            const response = await github.rest.issues.create({
               ...context.repo,
               title: issueTitle,
               body: issueBody,
