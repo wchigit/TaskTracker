@@ -8,6 +8,7 @@ on:
 permissions:
   id-token: write
   contents: read
+  issues: write
 
 jobs:
   build-and-deploy:
@@ -41,23 +42,21 @@ jobs:
 
     steps:
       - uses: actions/checkout@v3
-      
-      - name: Get failed job log
-        id: get-workflow-log
-        run:
-          workflow_log=$(gh run view ${{ github.run_id }} --log-failed)
-          echo "workflow_log=$workflow_log" >> $GITHUB_ENV
+
+      - name: Get failed job id and get log
+        id: get-log
+        run: |
+          # Get the job ID of the failed job
+          jobs=$(gh api repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/attempts/${{ github.run_attempt }}/jobs)
+          job_id=$(echo $jobs | jq -r '.jobs[] | select(.runner_name=="build-and-deploy") | .id')
+          echo "job_id=$job_id" >> $GITHUB_OUTPUT
+
+          # Get the logs of the failed job
+          workflow_log =$(gh run view --job ${{ env.job_id }} --log-failed)
+          echo "workflow_log=$workflow_log" >> $GITHUB_OUTPUT
           
-      - name: Create issue
-        uses: actions/github-script@v6
-        with:
-          script: |
-            const issueTitle = `Run "${{ github.run_id }}" of workflow "${{ github.workflow }} failed"`;
-            const issueBody = `Workflow failed log:\n${{ env.workflow_log }}`;
-            const response = await github.rest.issues.create({
-              ...context.repo,
-              title: issueTitle,
-              body: issueBody,
-              assignees: ['wchigit']
-            });
-            console.log(`Issue created with ID: ${response.data.id}`);
+      - name: Create issue for failed job with logs
+        run: |
+          # Create an issue with the logs of the failed job
+          gh issue create --title "Workflow ${{ github.workflow }} failed at run ${{ github.run_id }}" --body "The workflow failed. Here are the logs:\n${{ env.workflow_log }}" --assignee wchigit
+  
