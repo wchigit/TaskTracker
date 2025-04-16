@@ -43,15 +43,19 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
-      - name: Get failed job id and get log
-        id: get-log
+      - name: Get failed job id
+        id: get-job-id
         run: |
           # Get the job ID of the failed job
           jobs=$(gh api repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs)
           job_id=$(echo $jobs | jq -r '.jobs[] | select(.name=="build-and-deploy") | .id')
-
+          echo "job_id=$job_id" >> $GITHUB_ENV
+      
+      - name: Get logs of failed job
+        id: get-logs
+        run: |
           # Get the logs of the failed job
-          workflow_log =$(gh api repos/${{ github.repository }}/actions/jobs/$job_id/logs)
+          workflow_log =$(gh api repos/${{ github.repository }}/actions/jobs/${{ env.job_id }}/logs)
           echo "workflow_log=$workflow_log" >> $GITHUB_ENV
           
       - name: Create issue for failed job with logs
