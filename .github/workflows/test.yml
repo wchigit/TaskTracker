@@ -24,7 +24,7 @@ jobs:
         with:
           context: ./frontend
           push: true
-          tags: wup74frld4cli.azurecr.io/tasktracker-frontend:${{ github.sha }}
+          tags: ${{ env.ACR_NAME }}.azurecr.io/tasktracker-frontend:${{ github.sha }}
           file: ./frontend/Dockerfile.prod
 
       - name: Build and push backend image
