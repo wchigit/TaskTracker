@@ -35,6 +35,8 @@ jobs:
   create-issue-if-job-fails:
     runs-on: ubuntu-latest
     needs: build-and-deploy
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
     if: failure()
 
     steps:
