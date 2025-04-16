@@ -50,11 +50,11 @@ jobs:
           jobs=$(gh api repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs)
           job_id=$(echo $jobs | jq -r '.jobs[] | select(.name=="build-and-deploy") | .id')
           echo "${job_id}"
-          echo "job_id=$job_id" >> $GITHUB_OUTPUT
+          echo "job_id=$job_id" >> $GITHUB_ENV
 
           # Get the logs of the failed job
           workflow_log =$(gh run view --job ${{ env.job_id }} --log-failed)
-          echo "workflow_log=$workflow_log" >> $GITHUB_OUTPUT
+          echo "workflow_log=$workflow_log" >> $GITHUB_ENV
           
       - name: Create issue for failed job with logs
         run: |
