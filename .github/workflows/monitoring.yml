@@ -23,8 +23,7 @@ jobs:
           run: |
             echo "Creating issue for failed workflow run..."
             issueTitle="Run ${{ github.event.workflow_run.id }} failed for workflow ${{ github.event.workflow_run.name }}"
-            echo "Issue title: $issueTitle"
-            workflowFailureLog=$(gh api /repos/${{ github.event.repository.full_name }}/actions/runs/${{ github.event.workflow_run.id }}/logs)
+            workflowFailureLog="$(gh run view ${{ github.event.workflow_run.id }} --log-failed)"
             echo "Workflow failure log: $workflowFailureLog"
             issueBody="The workflow run failure log:\n$workflowFailureLog"
             gh issue create --title "$issueTitle" --body "$issueBody" --repo ${{ github.event.repository.full_name }} --assignee "Copilot"
