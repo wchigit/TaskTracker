@@ -47,8 +47,10 @@ jobs:
         id: get-log
         run: |
           # Get the job ID of the failed job
-          jobs=$(gh api repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/attempts/${{ github.run_attempt }}/jobs)
+          jobs=$(gh api repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs)
+          echo "${jobs}"
           job_id=$(echo $jobs | jq -r '.jobs[] | select(.runner_name=="build-and-deploy") | .id')
+          echo "${job_id}"
           echo "job_id=$job_id" >> $GITHUB_OUTPUT
 
           # Get the logs of the failed job
