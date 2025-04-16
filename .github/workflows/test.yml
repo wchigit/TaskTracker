@@ -1,4 +1,4 @@
-name: Test get workflow log
+name: Build and Deploy Workflow
 
 on:
   push:
@@ -19,47 +19,18 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
-      - name: Build and push backend image
-        uses: docker/build-push-action@v4
-        with:
-          context: ./backend
-          push: true
-          tags: ${{ env.acr_name }}.azurecr.io/tasktracker-backend:${{ github.sha }}
-          file: ./backend/Dockerfile
-
       - name: Build and push frontend image
         uses: docker/build-push-action@v4
         with:
           context: ./frontend
           push: true
-          tags: ${{ env.acr_name }}.azurecr.io/tasktracker-frontend:${{ github.sha }}
+          tags: acrwup74frld4cli.azurecr.io/tasktracker-frontend:${{ github.sha }}
           file: ./frontend/Dockerfile.prod
-  create-issue-if-job-fails:
-    runs-on: ubuntu-latest
-    needs: build-and-deploy
-    if: failure()
-    env:
-      GITHUB_TOKEN: ${{ secrets.GIT_TOKEN }}
 
-    steps:
-      - uses: actions/checkout@v3
-
-      - name: Get failed job id
-        id: get-job-id
-        run: |
-          # Get the job ID of the failed job
-          jobs=$(gh api repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs)
-          job_id=$(echo $jobs | jq -r '.jobs[] | select(.name=="build-and-deploy") | .id')
-          echo "job_id=$job_id" >> $GITHUB_ENV
-      
-      - name: Get logs of failed job
-        id: get-logs
-        run: |
-          job_log =$(gh api -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28" repos/${{ github.repository }}/actions/jobs/${{ env.job_id }}/logs)
-          echo "job_log=$job_log" >> $GITHUB_ENV
-          
-      - name: Create issue for failed job with logs
-        run: |
-          # Create an issue with the logs of the failed job
-          gh issue create --title "Workflow ${{ github.workflow }} failed at run ${{ github.run_id }}" --body "The workflow failed. Here are the logs:\n${{ env.job_log }}" --assignee wchigit
-  
+      - name: Build and push backend image
+        uses: docker/build-push-action@v4
+        with:
+          context: ./backend
+          push: true
+          tags: acrwup74frld4cli.azurecr.io/tasktracker-backend:${{ github.sha }}
+          file: ./backend/Dockerfile
