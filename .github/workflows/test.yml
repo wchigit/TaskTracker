@@ -40,6 +40,8 @@ jobs:
     if: failure()
 
     steps:
+      - uses: actions/checkout@v3
+      
       - name: Get failed job log
         id: get-workflow-log
         run:
