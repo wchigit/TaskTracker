@@ -54,12 +54,11 @@ jobs:
       - name: Get logs of failed job
         id: get-logs
         run: |
-          # Get the logs of the failed job
-          workflow_log =$(gh api repos/wchigit/TaskTracker/actions/jobs/40637664219/logs)
-          echo "workflow_log=$workflow_log" >> $GITHUB_ENV
+          job_log =$(gh api repos/wchigit/TaskTracker/actions/jobs/${{ env.job_id }}/logs)
+          echo "job_log=$job_log" >> $GITHUB_ENV
           
       - name: Create issue for failed job with logs
         run: |
           # Create an issue with the logs of the failed job
-          gh issue create --title "Workflow ${{ github.workflow }} failed at run ${{ github.run_id }}" --body "The workflow failed. Here are the logs:\n${{ env.workflow_log }}" --assignee wchigit
+          gh issue create --title "Workflow ${{ github.workflow }} failed at run ${{ github.run_id }}" --body "The workflow failed. Here are the logs:\n${{ env.job_log }}" --assignee wchigit
   
