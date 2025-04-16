@@ -2,7 +2,7 @@ name: Build and Deploy Workflow
 
 on:
   push:
-    branches: [ master ]
+    branches: [ master, wc/ppl-test ]
   workflow_dispatch:
 
 permissions:
