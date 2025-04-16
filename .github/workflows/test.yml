@@ -11,6 +11,9 @@ permissions:
   issues: write
   actions: read
 
+env:
+  GITHUB_TOKEN: ${{ github.token }}
+
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
@@ -37,8 +40,6 @@ jobs:
   create-issue-if-job-fails:
     runs-on: ubuntu-latest
     needs: build-and-deploy
-    env:
-      GITHUB_TOKEN: ${{ github.token }}
     if: failure()
 
     steps:
@@ -55,7 +56,7 @@ jobs:
       - name: Get logs of failed job
         id: get-logs
         run: |
-          job_log =$(gh api repos/${{ github.repository }}/actions/jobs/${{ env.job_id }}/logs)
+          job_log =$(gh api -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28" repos/${{ github.repository }}/actions/jobs/${{ env.job_id }}/logs)
           echo "job_log=$job_log" >> $GITHUB_ENV
           
       - name: Create issue for failed job with logs
