@@ -1,0 +1,36 @@
+name: Build and Deploy Workflow
+
+on:
+  push:
+    branches: [ master ]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+  issues: write
+  actions: read
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    environment: dev
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Build and push frontend image
+        uses: docker/build-push-action@v4
+        with:
+          context: ./frontend
+          push: true
+          tags: ${{ env.ACR_NAME }}.azurecr.io/tasktracker-frontend:${{ github.sha }}
+          file: ./frontend/Dockerfile.prod
+
+      - name: Build and push backend image
+        uses: docker/build-push-action@v4
+        with:
+          context: ./backend
+          push: true
+          tags: acrwup74frld4cli.azurecr.io/tasktracker-backend:${{ github.sha }}
+          file: ./backend/Dockerfile
