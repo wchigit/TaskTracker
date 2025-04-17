@@ -17,14 +17,22 @@ jobs:
         id: get-logs
         with:
           script: |
-            const logs = await github.rest.actions.downloadWorkflowRunLogs({
+            const artifact = await github.rest.actions.listWorkflowRunArtifacts({
               owner: context.repo.owner,
               repo: context.repo.repo,
               run_id: context.payload.workflow_run.id
             });
             
-            const logContent = Buffer.from(logs.data).toString();
-            return logContent;
+            const response = await github.rest.actions.downloadWorkflowRunLogs({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: context.payload.workflow_run.id
+            });
+            
+            // Convert the ArrayBuffer to base64 string
+            const base64String = Buffer.from(response.data).toString('base64');
+            const decodedLogs = Buffer.from(base64String, 'base64').toString('utf-8');
+            return decodedLogs;
 
       - name: Create issue
         uses: actions/github-script@v6
@@ -41,7 +49,7 @@ jobs:
             
             ### Workflow Logs
             \`\`\`
-            ${{ steps.get-logs.outputs.result }}
+            ${{steps.get-logs.outputs.result}}
             \`\`\`
             `;
             
