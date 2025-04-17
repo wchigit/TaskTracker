@@ -10,53 +10,20 @@ jobs:
   create-issue-on-failure:
     runs-on: ubuntu-latest
     if: ${{ github.event.workflow_run.conclusion == 'failure' }}
-
+    
     steps:
       - name: Get workflow logs
-        uses: actions/github-script@v6
-        id: get-logs
-        with:
-          script: |
-            const artifact = await github.rest.actions.listWorkflowRunArtifacts({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              run_id: context.payload.workflow_run.id
-            });
-            
-            const response = await github.rest.actions.downloadWorkflowRunLogs({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              run_id: context.payload.workflow_run.id
-            });
-            
-            // Convert the ArrayBuffer to base64 string
-            const base64String = Buffer.from(response.data).toString('base64');
-            const decodedLogs = Buffer.from(base64String, 'base64').toString('utf-8');
-            return decodedLogs;
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run view ${{ github.event.workflow_run.id }} --log > workflow_logs.txt
 
       - name: Create issue
-        uses: actions/github-script@v6
-        with:
-          script: |
-            const issueTitle = `Workflow Failure: ${context.payload.workflow_run.name} (Run ID: ${context.payload.workflow_run.id})`;
-            const issueBody = `
-            ### Workflow Failure Details
-            - Workflow: ${context.payload.workflow_run.name}
-            - Run ID: ${context.payload.workflow_run.id}
-            - Status: ${context.payload.workflow_run.conclusion}
-            - Triggered by: ${context.payload.workflow_run.head_commit.message}
-            - Commit: ${context.payload.workflow_run.head_sha}
-            
-            ### Workflow Logs
-            \`\`\`
-            ${{steps.get-logs.outputs.result}}
-            \`\`\`
-            `;
-            
-            await github.rest.issues.create({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              title: issueTitle,
-              body: issueBody,
-              assignees: ['wchigit']
-            });
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue create \
+            --title "Workflow Failure: Build and Deploy Workflow (Run #${{ github.event.workflow_run.id }})" \
+            --body "$(cat workflow_logs.txt)" \
+            --assignee "wchigit" \
+            --repo ${{ github.repository }}
