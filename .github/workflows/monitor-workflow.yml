@@ -41,7 +41,7 @@ jobs:
             
             ### Workflow Logs
             \`\`\`
-            ${steps.get-logs.outputs.result}
+            ${{ steps.get-logs.outputs.result }}
             \`\`\`
             `;
             
