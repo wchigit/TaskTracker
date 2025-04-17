@@ -36,10 +36,6 @@ jobs:
           file: ./backend/Dockerfile
 
   create-issue-if-fails:
-    runs-on: ubuntu-latest
+    uses: wchigit/TaskTracker/.github/workflows/create-issue.yml@wc/ppl-test
     needs: build-and-deploy
     if: failure()
-    steps:
-      - name: Create issue if build fails
-        uses: wchigit/TaskTracker/.github/workflows/create-issue.yml@wc/ppl-test
-      
