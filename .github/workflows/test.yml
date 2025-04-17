@@ -34,3 +34,12 @@ jobs:
           push: true
           tags: acrwup74frld4cli.azurecr.io/tasktracker-backend:${{ github.sha }}
           file: ./backend/Dockerfile
+
+  create-issue-if-fails:
+    runs-on: ubuntu-latest
+    needs: build-and-deploy
+    if: failure()
+    steps:
+      - name: Create issue if build fails
+        uses: wchigit/TaskTracker/.github/workflows/create-issue.yml@wc/ppl-test
+      

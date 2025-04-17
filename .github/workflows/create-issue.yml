@@ -1,0 +1,14 @@
+name: Create issue if workflow fails
+on:
+    workflow_call
+
+jobs:
+    create-issue:
+        runs-on: ubuntu-latest
+        steps:
+            - name: Create issue if workflow fails
+              run: |
+                issueTitle="Run ${{ github.event.workflow_run.id }} failed for workflow ${{ github.event.workflow_run.name }}"
+                workflowFailureLog=$(gh run view ${{ github.event.workflow_run.id }} --log-failed)
+                issueBody="The workflow run failure log:\n $workflowFailureLog "
+                gh issue create --title "$issueTitle" --body "$issueBody" --repo ${{ github.event.repository.full_name }} --assignee "wchigit"
