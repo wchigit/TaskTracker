@@ -1,6 +1,6 @@
 // The template to create an Azure Container Registry
 
-param name string = 'acr_${uniqueString(resourceGroup().id)}'
+param name string = 'acr${uniqueString(resourceGroup().id)}'
 param location string = resourceGroup().location
 param sku string = 'Standard'
 
