@@ -41,7 +41,7 @@ jobs:
           az deployment sub wait --name $DEPLOYMENT_NAME --created
           
           # Get the ACR name from the deployment output
-          ACR_NAME=$(az deployment sub show --name $DEPLOYMENT_NAME --query properties.outputs.azurE_CONTAINER_REGISTRY_ENDPOINT.value --output tsv | cut -d'.' -f1)
+          ACR_NAME=$(az deployment sub show --name $DEPLOYMENT_NAME --query properties.outputs.AZURE_CONTAINER_REGISTRY_ENDPOINT.value --output tsv | cut -d'.' -f1)
           echo "acr_name=$ACR_NAME" >> $GITHUB_ENV
 
       - name: Set up Docker Buildx

@@ -34,8 +34,8 @@ resource containerApp 'Microsoft.App/containerApps@2023-05-01' = {
 			}
 			registries: [
 				{
-					server: containerRegistry.name
-					username: containerRegistry.properties.loginServer
+					server: containerRegistry.properties.loginServer
+					username: containerRegistry.name
 					passwordSecretRef: 'acr-password'
 				}
 			]
