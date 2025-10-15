@@ -1,7 +1,6 @@
 # Bicep build artifacts
-*.json
-!package*.json
-!tsconfig.json
+infrastructure/*.json
+!infrastructure/package*.json
 
 # Python
 __pycache__/
