@@ -1,6 +1,5 @@
 # Bicep build artifacts
 infrastructure/*.json
-!infrastructure/package*.json
 
 # Python
 __pycache__/
