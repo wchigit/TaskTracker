@@ -1,0 +1,312 @@
+name: Azure CLI - Deploy TaskTracker (No Bicep)
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - develop
+    paths-ignore:
+      - '*.md'
+      - '.github/workflows/azure-dev.yml'
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AZURE_RESOURCE_GROUP: rg-tasktracker
+  AZURE_LOCATION: northeurope
+  APP_NAME: tasktracker
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    # Azure Authentication using OpenID Connect (Federated Identity)
+    - name: Azure Login
+      uses: azure/login@v1
+      with:
+        client-id: ${{ vars.AZURE_CLIENT_ID }}
+        tenant-id: ${{ vars.AZURE_TENANT_ID }}
+        subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+    - name: Set environment variables
+      run: |
+        # Generate unique token for resource naming
+        RESOURCE_TOKEN=$(echo '${{ github.repository_owner }}${{ github.event.repository.name }}${{ env.AZURE_LOCATION }}' | shasum -a 256 | cut -c1-13)
+        echo "RESOURCE_TOKEN=$RESOURCE_TOKEN" >> $GITHUB_ENV
+        echo "MANAGED_IDENTITY_NAME=azumi$RESOURCE_TOKEN" >> $GITHUB_ENV
+        echo "LOG_ANALYTICS_NAME=azlaw$RESOURCE_TOKEN" >> $GITHUB_ENV
+        echo "APP_INSIGHTS_NAME=azai$RESOURCE_TOKEN" >> $GITHUB_ENV
+        echo "CONTAINER_REGISTRY_NAME=azcr$RESOURCE_TOKEN" >> $GITHUB_ENV
+        echo "KEY_VAULT_NAME=azkv$RESOURCE_TOKEN" >> $GITHUB_ENV
+        echo "COSMOS_DB_NAME=azcdb$RESOURCE_TOKEN" >> $GITHUB_ENV
+        echo "CONTAINER_ENV_NAME=azcae$RESOURCE_TOKEN" >> $GITHUB_ENV
+        echo "BACKEND_APP_NAME=azca-backend-$RESOURCE_TOKEN" >> $GITHUB_ENV
+        echo "FRONTEND_APP_NAME=azca-frontend-$RESOURCE_TOKEN" >> $GITHUB_ENV
+
+    - name: Create Resource Group
+      run: |
+        az group create \
+          --name ${{ env.AZURE_RESOURCE_GROUP }} \
+          --location ${{ env.AZURE_LOCATION }} \
+          --tags environment=production project=tasktracker
+
+    - name: Create User-Assigned Managed Identity
+      run: |
+        az identity create \
+          --name ${{ env.MANAGED_IDENTITY_NAME }} \
+          --resource-group ${{ env.AZURE_RESOURCE_GROUP }}
+
+    - name: Create Log Analytics Workspace
+      run: |
+        az monitor log-analytics workspace create \
+          --workspace-name ${{ env.LOG_ANALYTICS_NAME }} \
+          --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+          --location ${{ env.AZURE_LOCATION }} \
+          --sku PerGB2018 \
+          --retention-time 30
+
+    - name: Create Application Insights
+      run: |
+        WORKSPACE_ID=$(az monitor log-analytics workspace show \
+          --workspace-name ${{ env.LOG_ANALYTICS_NAME }} \
+          --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+          --query "id" -o tsv)
+        
+        az monitor app-insights component create \
+          --app ${{ env.APP_INSIGHTS_NAME }} \
+          --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+          --location ${{ env.AZURE_LOCATION }} \
+          --kind web \
+          --application-type web \
+          --workspace $WORKSPACE_ID
+
+    - name: Create Container Registry
+      run: |
+        az acr create \
+          --name ${{ env.CONTAINER_REGISTRY_NAME }} \
+          --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+          --location ${{ env.AZURE_LOCATION }} \
+          --sku Basic \
+          --admin-enabled false
+
+    - name: Assign AcrPull role to Managed Identity
+      run: |
+        MANAGED_IDENTITY_ID=$(az identity show \
+          --name ${{ env.MANAGED_IDENTITY_NAME }} \
+          --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+          --query "principalId" -o tsv)
+        
+        REGISTRY_ID=$(az acr show \
+          --name ${{ env.CONTAINER_REGISTRY_NAME }} \
+          --query "id" -o tsv)
+        
+        az role assignment create \
+          --assignee $MANAGED_IDENTITY_ID \
+          --role "AcrPull" \
+          --scope $REGISTRY_ID
+
+    - name: Create Key Vault
+      run: |
+        az keyvault create \
+          --name ${{ env.KEY_VAULT_NAME }} \
+          --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+          --location ${{ env.AZURE_LOCATION }} \
+          --enable-rbac-authorization \
+          --public-network-access Enabled
+
+    - name: Assign Key Vault Secrets Officer role to Managed Identity
+      run: |
+        MANAGED_IDENTITY_ID=$(az identity show \
+          --name ${{ env.MANAGED_IDENTITY_NAME }} \
+          --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+          --query "principalId" -o tsv)
+        
+        KEYVAULT_ID=$(az keyvault show \
+          --name ${{ env.KEY_VAULT_NAME }} \
+          --query "id" -o tsv)
+        
+        az role assignment create \
+          --assignee $MANAGED_IDENTITY_ID \
+          --role "Key Vault Secrets Officer" \
+          --scope $KEYVAULT_ID
+
+    - name: Create Cosmos DB Account
+      run: |
+        az cosmosdb create \
+          --name ${{ env.COSMOS_DB_NAME }} \
+          --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+          --kind MongoDB \
+          --locations regionName=${{ env.AZURE_LOCATION }} failoverPriority=0 isZoneRedundant=False \
+          --capabilities EnableMongo \
+          --ip-range-filter "0.0.0.0" \
+          --public-network-access Enabled
+
+    - name: Create Cosmos DB Database and Collection
+      run: |
+        # Create database
+        az cosmosdb mongodb database create \
+          --account-name ${{ env.COSMOS_DB_NAME }} \
+          --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+          --name tasktracker
+        
+        # Create collection
+        az cosmosdb mongodb collection create \
+          --account-name ${{ env.COSMOS_DB_NAME }} \
+          --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+          --database-name tasktracker \
+          --name tasks \
+          --shard id
+
+    - name: Store Cosmos DB Connection String in Key Vault
+      run: |
+        CONNECTION_STRING=$(az cosmosdb keys list \
+          --name ${{ env.COSMOS_DB_NAME }} \
+          --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+          --type connection-strings \
+          --query "connectionStrings[0].connectionString" -o tsv)
+        
+        az keyvault secret set \
+          --vault-name ${{ env.KEY_VAULT_NAME }} \
+          --name "cosmos-connection-string" \
+          --value "$CONNECTION_STRING"
+
+    - name: Create Container Apps Environment
+      run: |
+        WORKSPACE_ID=$(az monitor log-analytics workspace show \
+          --workspace-name ${{ env.LOG_ANALYTICS_NAME }} \
+          --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+          --query "customerId" -o tsv)
+        
+        WORKSPACE_KEY=$(az monitor log-analytics workspace get-shared-keys \
+          --workspace-name ${{ env.LOG_ANALYTICS_NAME }} \
+          --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+          --query "primarySharedKey" -o tsv)
+        
+        az containerapp env create \
+          --name ${{ env.CONTAINER_ENV_NAME }} \
+          --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+          --location ${{ env.AZURE_LOCATION }} \
+          --logs-workspace-id $WORKSPACE_ID \
+          --logs-workspace-key $WORKSPACE_KEY
+
+    - name: Build and Push Backend Image
+      run: |
+        az acr build \
+          --registry ${{ env.CONTAINER_REGISTRY_NAME }} \
+          --image tasktracker/backend:${{ github.sha }} \
+          --image tasktracker/backend:latest \
+          --file backend/Dockerfile \
+          backend/
+
+    - name: Build and Push Frontend Image
+      run: |
+        az acr build \
+          --registry ${{ env.CONTAINER_REGISTRY_NAME }} \
+          --image tasktracker/frontend:${{ github.sha }} \
+          --image tasktracker/frontend:latest \
+          --file frontend/Dockerfile.prod \
+          frontend/
+
+    - name: Create Backend Container App
+      run: |
+        MANAGED_IDENTITY_RESOURCE_ID=$(az identity show \
+          --name ${{ env.MANAGED_IDENTITY_NAME }} \
+          --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+          --query "id" -o tsv)
+        
+        REGISTRY_SERVER=$(az acr show \
+          --name ${{ env.CONTAINER_REGISTRY_NAME }} \
+          --query "loginServer" -o tsv)
+        
+        CONNECTION_STRING=$(az cosmosdb keys list \
+          --name ${{ env.COSMOS_DB_NAME }} \
+          --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+          --type connection-strings \
+          --query "connectionStrings[0].connectionString" -o tsv)
+        
+        az containerapp create \
+          --name ${{ env.BACKEND_APP_NAME }} \
+          --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+          --environment ${{ env.CONTAINER_ENV_NAME }} \
+          --image $REGISTRY_SERVER/tasktracker/backend:${{ github.sha }} \
+          --target-port 80 \
+          --ingress external \
+          --user-assigned $MANAGED_IDENTITY_RESOURCE_ID \
+          --registry-server $REGISTRY_SERVER \
+          --registry-identity $MANAGED_IDENTITY_RESOURCE_ID \
+          --secrets mongo-url="$CONNECTION_STRING" \
+          --env-vars MONGO_URL=secretref:mongo-url \
+          --cpu 0.5 \
+          --memory 1.0Gi \
+          --min-replicas 0 \
+          --max-replicas 10 \
+          --tags azd-service-name=backend
+
+    - name: Get Backend Container App FQDN
+      id: backend-url
+      run: |
+        BACKEND_FQDN=$(az containerapp show \
+          --name ${{ env.BACKEND_APP_NAME }} \
+          --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+          --query "properties.configuration.ingress.fqdn" -o tsv)
+        echo "backend_url=https://$BACKEND_FQDN" >> $GITHUB_OUTPUT
+
+    - name: Create Frontend Container App
+      run: |
+        MANAGED_IDENTITY_RESOURCE_ID=$(az identity show \
+          --name ${{ env.MANAGED_IDENTITY_NAME }} \
+          --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+          --query "id" -o tsv)
+        
+        REGISTRY_SERVER=$(az acr show \
+          --name ${{ env.CONTAINER_REGISTRY_NAME }} \
+          --query "loginServer" -o tsv)
+        
+        az containerapp create \
+          --name ${{ env.FRONTEND_APP_NAME }} \
+          --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+          --environment ${{ env.CONTAINER_ENV_NAME }} \
+          --image $REGISTRY_SERVER/tasktracker/frontend:${{ github.sha }} \
+          --target-port 80 \
+          --ingress external \
+          --user-assigned $MANAGED_IDENTITY_RESOURCE_ID \
+          --registry-server $REGISTRY_SERVER \
+          --registry-identity $MANAGED_IDENTITY_RESOURCE_ID \
+          --env-vars REACT_APP_API_URL=${{ steps.backend-url.outputs.backend_url }} \
+          --cpu 0.25 \
+          --memory 0.5Gi \
+          --min-replicas 0 \
+          --max-replicas 5 \
+          --tags azd-service-name=frontend
+
+    - name: Deployment Summary
+      run: |
+        echo "## 🚀 Deployment Summary" >> $GITHUB_STEP_SUMMARY
+        echo "**Resource Group:** ${{ env.AZURE_RESOURCE_GROUP }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Location:** ${{ env.AZURE_LOCATION }}" >> $GITHUB_STEP_SUMMARY
+        
+        REGISTRY_SERVER=$(az acr show --name ${{ env.CONTAINER_REGISTRY_NAME }} --query "loginServer" -o tsv)
+        echo "**Container Registry:** $REGISTRY_SERVER" >> $GITHUB_STEP_SUMMARY
+        echo "**Backend API:** ${{ steps.backend-url.outputs.backend_url }}" >> $GITHUB_STEP_SUMMARY
+        
+        FRONTEND_FQDN=$(az containerapp show \
+          --name ${{ env.FRONTEND_APP_NAME }} \
+          --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+          --query "properties.configuration.ingress.fqdn" -o tsv)
+        
+        echo "**Frontend App:** https://$FRONTEND_FQDN" >> $GITHUB_STEP_SUMMARY
+        echo "**Commit SHA:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
