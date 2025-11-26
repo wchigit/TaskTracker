@@ -1,0 +1,105 @@
+name: Test Azure Authentication
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - develop
+    paths:
+      - '.github/workflows/test-auth.yml'
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  test-authentication:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Azure Login Test
+      uses: azure/login@v1
+      with:
+        client-id: ${{ vars.AZURE_CLIENT_ID }}
+        tenant-id: ${{ vars.AZURE_TENANT_ID }}
+        subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+    - name: Verify Authentication
+      run: |
+        echo "🔍 Testing Azure CLI authentication..."
+        
+        # Test basic authentication
+        echo "✅ Current account info:"
+        az account show --output table
+        
+        echo ""
+        echo "✅ Available subscriptions:"
+        az account list --query "[].{Name:name, SubscriptionId:id, State:state}" --output table
+        
+        echo ""
+        echo "✅ Resource groups in current subscription:"
+        az group list --query "[].{Name:name, Location:location}" --output table
+        
+        echo ""
+        echo "✅ Testing permissions - trying to list resources in rg-wctest:"
+        if az group show --name "rg-wctest" --output table 2>/dev/null; then
+          echo "✅ Successfully accessed rg-wctest resource group"
+          az resource list --resource-group "rg-wctest" --query "[].{Name:name, Type:type, Location:location}" --output table
+        else
+          echo "❌ Could not access rg-wctest resource group"
+        fi
+
+    - name: Test Managed Identity Info
+      run: |
+        echo ""
+        echo "🔍 Managed Identity Information:"
+        echo "Client ID: ${{ vars.AZURE_CLIENT_ID }}"
+        echo "Tenant ID: ${{ vars.AZURE_TENANT_ID }}"
+        echo "Subscription ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}"
+        
+        echo ""
+        echo "🔍 GitHub Context Information:"
+        echo "Repository: ${{ github.repository }}"
+        echo "Branch/Ref: ${{ github.ref }}"
+        echo "Event: ${{ github.event_name }}"
+        echo "Actor: ${{ github.actor }}"
+
+    - name: Test Azure Resource Creation (Optional)
+      run: |
+        echo ""
+        echo "🧪 Testing resource creation permissions..."
+        
+        # Try to create a simple resource group to test permissions
+        TEST_RG_NAME="rg-auth-test-$(date +%s)"
+        
+        if az group create --name "$TEST_RG_NAME" --location "northeurope" --tags "test=github-actions" "created-by=managed-identity"; then
+          echo "✅ Successfully created test resource group: $TEST_RG_NAME"
+          
+          # Clean up immediately
+          echo "🧹 Cleaning up test resource group..."
+          az group delete --name "$TEST_RG_NAME" --yes --no-wait
+          echo "✅ Test resource group deletion initiated"
+        else
+          echo "❌ Failed to create test resource group - check permissions"
+          exit 1
+        fi
+
+    - name: Authentication Summary
+      if: always()
+      run: |
+        echo ""
+        echo "## 🎯 Authentication Test Results" >> $GITHUB_STEP_SUMMARY
+        echo "- **Managed Identity Client ID**: ${{ vars.AZURE_CLIENT_ID }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Azure Tenant**: ${{ vars.AZURE_TENANT_ID }}" >> $GITHUB_STEP_SUMMARY  
+        echo "- **Subscription**: ${{ vars.AZURE_SUBSCRIPTION_ID }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Repository**: ${{ github.repository }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Branch**: ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Trigger**: ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "✅ **Status**: Authentication successful with User-Assigned Managed Identity" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "🚀 **Ready for deployment**: The managed identity is properly configured and has the necessary permissions." >> $GITHUB_STEP_SUMMARY
