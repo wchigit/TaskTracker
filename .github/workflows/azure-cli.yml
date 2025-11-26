@@ -1,0 +1,144 @@
+name: Azure CLI - Deploy TaskTracker
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - develop
+    paths-ignore:
+      - '*.md'
+      - '.github/workflows/azure-dev.yml'
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AZURE_RESOURCE_GROUP: rg-tasktracker
+  AZURE_LOCATION: northeurope
+  APP_NAME: tasktracker
+  REGISTRY_NAME: acrTaskTracker
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    # Authentication - Option 1: Service Principal with Secret
+    - name: Azure Login (Service Principal)
+      if: ${{ secrets.AZURE_CREDENTIALS != '' }}
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+    # Authentication - Option 2: OpenID Connect (Federated Identity)
+    - name: Azure Login (OIDC)
+      if: ${{ vars.AZURE_CLIENT_ID != '' }}
+      uses: azure/login@v1
+      with:
+        client-id: ${{ vars.AZURE_CLIENT_ID }}
+        tenant-id: ${{ vars.AZURE_TENANT_ID }}
+        subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+    - name: Set environment variables
+      run: |
+        echo "RESOURCE_TOKEN=$(echo '${{ github.repository_owner }}${{ github.event.repository.name }}${{ env.AZURE_LOCATION }}' | shasum -a 256 | cut -c1-13)" >> $GITHUB_ENV
+        echo "REGISTRY_LOGIN_SERVER=${{ env.REGISTRY_NAME }}$RESOURCE_TOKEN.azurecr.io" >> $GITHUB_ENV
+
+    - name: Create Resource Group
+      run: |
+        az group create \
+          --name ${{ env.AZURE_RESOURCE_GROUP }} \
+          --location ${{ env.AZURE_LOCATION }} \
+          --tags environment=production project=tasktracker
+
+    - name: Deploy Infrastructure
+      run: |
+        az deployment group create \
+          --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+          --template-file infra/main.bicep \
+          --parameters environmentName=${{ env.APP_NAME }} location=${{ env.AZURE_LOCATION }} \
+          --output table
+
+    - name: Get Container Registry Info
+      id: acr-info
+      run: |
+        REGISTRY_NAME=$(az acr list --resource-group ${{ env.AZURE_RESOURCE_GROUP }} --query "[0].name" -o tsv)
+        REGISTRY_SERVER=$(az acr show --name $REGISTRY_NAME --query "loginServer" -o tsv)
+        echo "registry_name=$REGISTRY_NAME" >> $GITHUB_OUTPUT
+        echo "registry_server=$REGISTRY_SERVER" >> $GITHUB_OUTPUT
+
+    - name: Build and Push Backend Image
+      run: |
+        az acr build \
+          --registry ${{ steps.acr-info.outputs.registry_name }} \
+          --image tasktracker/backend:${{ github.sha }} \
+          --image tasktracker/backend:latest \
+          --file backend/Dockerfile \
+          backend/
+
+    - name: Build and Push Frontend Image
+      run: |
+        az acr build \
+          --registry ${{ steps.acr-info.outputs.registry_name }} \
+          --image tasktracker/frontend:${{ github.sha }} \
+          --image tasktracker/frontend:latest \
+          --file frontend/Dockerfile.prod \
+          frontend/
+
+    - name: Get Backend Container App FQDN
+      id: backend-url
+      run: |
+        BACKEND_FQDN=$(az containerapp show \
+          --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+          --name $(az containerapp list --resource-group ${{ env.AZURE_RESOURCE_GROUP }} --query "[?contains(tags.\"azd-service-name\", 'backend')].name" -o tsv) \
+          --query "properties.configuration.ingress.fqdn" -o tsv)
+        echo "backend_url=https://$BACKEND_FQDN" >> $GITHUB_OUTPUT
+
+    - name: Update Backend Container App
+      run: |
+        BACKEND_APP_NAME=$(az containerapp list --resource-group ${{ env.AZURE_RESOURCE_GROUP }} --query "[?contains(tags.\"azd-service-name\", 'backend')].name" -o tsv)
+        
+        az containerapp update \
+          --name $BACKEND_APP_NAME \
+          --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+          --image ${{ steps.acr-info.outputs.registry_server }}/tasktracker/backend:${{ github.sha }} \
+          --output table
+
+    - name: Update Frontend Container App
+      run: |
+        FRONTEND_APP_NAME=$(az containerapp list --resource-group ${{ env.AZURE_RESOURCE_GROUP }} --query "[?contains(tags.\"azd-service-name\", 'frontend')].name" -o tsv)
+        
+        az containerapp update \
+          --name $FRONTEND_APP_NAME \
+          --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+          --image ${{ steps.acr-info.outputs.registry_server }}/tasktracker/frontend:${{ github.sha }} \
+          --set-env-vars REACT_APP_API_URL=${{ steps.backend-url.outputs.backend_url }} \
+          --output table
+
+    - name: Deployment Summary
+      run: |
+        echo "## 🚀 Deployment Summary" >> $GITHUB_STEP_SUMMARY
+        echo "**Resource Group:** ${{ env.AZURE_RESOURCE_GROUP }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Location:** ${{ env.AZURE_LOCATION }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Container Registry:** ${{ steps.acr-info.outputs.registry_server }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Backend API:** ${{ steps.backend-url.outputs.backend_url }}" >> $GITHUB_STEP_SUMMARY
+        
+        FRONTEND_FQDN=$(az containerapp show \
+          --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+          --name $(az containerapp list --resource-group ${{ env.AZURE_RESOURCE_GROUP }} --query "[?contains(tags.\"azd-service-name\", 'frontend')].name" -o tsv) \
+          --query "properties.configuration.ingress.fqdn" -o tsv)
+        
+        echo "**Frontend App:** https://$FRONTEND_FQDN" >> $GITHUB_STEP_SUMMARY
+        echo "**Commit SHA:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
