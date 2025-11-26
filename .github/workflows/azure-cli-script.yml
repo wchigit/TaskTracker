@@ -1,0 +1,61 @@
+name: Azure CLI - Deploy with Script
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - develop
+    paths-ignore:
+      - '*.md'
+      - '.github/workflows/azure-dev.yml'
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AZURE_RESOURCE_GROUP: rg-tasktracker
+  AZURE_LOCATION: northeurope
+  APP_NAME: tasktracker
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    # Azure Authentication using OpenID Connect (Federated Identity)
+    - name: Azure Login
+      uses: azure/login@v1
+      with:
+        client-id: ${{ vars.AZURE_CLIENT_ID }}
+        tenant-id: ${{ vars.AZURE_TENANT_ID }}
+        subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+    - name: Make deployment script executable
+      run: chmod +x ./scripts/deploy.sh
+
+    - name: Run deployment script
+      run: ./scripts/deploy.sh
+      env:
+        RESOURCE_GROUP: ${{ env.AZURE_RESOURCE_GROUP }}
+        LOCATION: ${{ env.AZURE_LOCATION }}
+        APP_NAME: ${{ env.APP_NAME }}
+        COMMIT_SHA: ${{ github.sha }}
+        REPOSITORY_OWNER: ${{ github.repository_owner }}
+        REPOSITORY_NAME: ${{ github.event.repository.name }}
+
+    - name: Output deployment results
+      run: |
+        echo "## 🚀 Deployment Complete" >> $GITHUB_STEP_SUMMARY
+        echo "Check the deployment script output above for details." >> $GITHUB_STEP_SUMMARY
