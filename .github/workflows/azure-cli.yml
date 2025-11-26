@@ -35,16 +35,8 @@ jobs:
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
 
-    # Authentication - Option 1: Service Principal with Secret
-    - name: Azure Login (Service Principal)
-      if: ${{ secrets.AZURE_CREDENTIALS != '' }}
-      uses: azure/login@v1
-      with:
-        creds: ${{ secrets.AZURE_CREDENTIALS }}
-
-    # Authentication - Option 2: OpenID Connect (Federated Identity)
-    - name: Azure Login (OIDC)
-      if: ${{ vars.AZURE_CLIENT_ID != '' }}
+    # Azure Authentication using OpenID Connect (Federated Identity)
+    - name: Azure Login
       uses: azure/login@v1
       with:
         client-id: ${{ vars.AZURE_CLIENT_ID }}
