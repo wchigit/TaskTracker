@@ -1,0 +1,11 @@
+{
+  "servers": {
+    "c2c": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "C:\\dev\\codetocloud\\codeToCloud\\mcpServers\\out\\mcpServers\\entrypointLocal.js"
+      ]
+    }
+  }
+}
