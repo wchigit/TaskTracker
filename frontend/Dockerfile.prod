@@ -1,8 +1,12 @@
 # With this dockerfile, react app access env at build time, so it can not be changed at runtime.
 # As a result, the react app can not access the backend api at runtime.
-FROM node:14
+FROM node:18-bullseye
 
 WORKDIR /app
+
+# Update package lists and upgrade all packages to latest versions
+# This ensures we get the latest security updates including ImageMagick
+RUN apt-get update && apt-get upgrade -y && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 COPY package.json ./
 
@@ -17,6 +21,11 @@ ENV REACT_APP_API_URL=http://localhost:80
 RUN npm run build
 
 FROM nginx:alpine
+
+# Update package lists and upgrade all packages to latest versions
+# This ensures we get the latest security updates
+RUN apk update && apk upgrade && rm -rf /var/cache/apk/*
+
 COPY --from=0 /app/build /usr/share/nginx/html
 
 EXPOSE 80
