@@ -74,7 +74,7 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     environment: dev
-    if: github.ref == 'refs/heads/develop' || github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'dev'
+    if: github.ref == 'refs/heads/develop' || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'dev')
     
     steps:
       - name: Checkout code
@@ -188,7 +188,7 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     environment: staging
-    if: github.ref == 'refs/heads/staging' || github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'staging'
+    if: github.ref == 'refs/heads/staging' || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'staging')
     
     steps:
       - name: Checkout code
@@ -302,7 +302,7 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     environment: production
-    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'production'
+    if: github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'production')
     
     steps:
       - name: Checkout code

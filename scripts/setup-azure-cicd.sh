@@ -47,9 +47,22 @@ az account set --subscription $SUBSCRIPTION_ID
 echo "✅ Using Azure Subscription: $SUBSCRIPTION_ID"
 echo ""
 
-# GitHub repository info
-GITHUB_ORG="wchigit"
-GITHUB_REPO="TaskTracker"
+# GitHub repository info - auto-detect from git remote
+echo "Detecting GitHub repository..."
+if ! git rev-parse --git-dir &> /dev/null; then
+    echo "❌ This script must be run from within the git repository"
+    exit 1
+fi
+
+GITHUB_REMOTE=$(git config --get remote.origin.url)
+if [[ $GITHUB_REMOTE =~ github.com[:/]([^/]+)/([^/.]+) ]]; then
+    GITHUB_ORG="${BASH_REMATCH[1]}"
+    GITHUB_REPO="${BASH_REMATCH[2]}"
+else
+    echo "❌ Could not detect GitHub organization and repository from git remote"
+    echo "   Remote URL: $GITHUB_REMOTE"
+    exit 1
+fi
 
 echo "✅ GitHub Organization: $GITHUB_ORG"
 echo "✅ GitHub Repository: $GITHUB_REPO"
