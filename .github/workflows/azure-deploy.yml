@@ -1,0 +1,413 @@
+name: Deploy to Azure
+
+on:
+  push:
+    branches:
+      - main
+      - staging
+      - develop
+  pull_request:
+    branches:
+      - main
+      - staging
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        type: choice
+        options:
+          - dev
+          - staging
+          - production
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Backend Docker Image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile
+          tags: tasktracker-backend:${{ github.sha }}
+          outputs: type=docker,dest=/tmp/backend-image.tar
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build Frontend Docker Image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./frontend
+          file: ./frontend/Dockerfile.prod
+          tags: tasktracker-frontend:${{ github.sha }}
+          outputs: type=docker,dest=/tmp/frontend-image.tar
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Upload Backend Image Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-image
+          path: /tmp/backend-image.tar
+          retention-days: 1
+
+      - name: Upload Frontend Image Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-image
+          path: /tmp/frontend-image.tar
+          retention-days: 1
+
+  deploy-dev:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: dev
+    if: github.ref == 'refs/heads/develop' || github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'dev'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download Backend Image
+        uses: actions/download-artifact@v4
+        with:
+          name: backend-image
+          path: /tmp
+
+      - name: Download Frontend Image
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-image
+          path: /tmp
+
+      - name: Load Docker Images
+        run: |
+          docker load --input /tmp/backend-image.tar
+          docker load --input /tmp/frontend-image.tar
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Get Azure Container Registry Name
+        id: acr
+        run: |
+          ACR_NAME=$(az acr list --resource-group rg-wcdev --query "[0].name" -o tsv)
+          if [ -z "$ACR_NAME" ]; then
+            echo "❌ No Azure Container Registry found in rg-wcdev"
+            exit 1
+          fi
+          echo "registry-name=$ACR_NAME" >> $GITHUB_OUTPUT
+          echo "✅ Found ACR: $ACR_NAME"
+
+      - name: Azure Container Registry Login
+        run: |
+          az acr login --name ${{ steps.acr.outputs.registry-name }}
+
+      - name: Tag and Push Images to ACR
+        run: |
+          ACR_SERVER="${{ steps.acr.outputs.registry-name }}.azurecr.io"
+          
+          # Tag and push backend
+          docker tag tasktracker-backend:${{ github.sha }} $ACR_SERVER/tasktracker-backend:${{ github.sha }}
+          docker tag tasktracker-backend:${{ github.sha }} $ACR_SERVER/tasktracker-backend:latest
+          docker push $ACR_SERVER/tasktracker-backend:${{ github.sha }}
+          docker push $ACR_SERVER/tasktracker-backend:latest
+          
+          # Tag and push frontend
+          docker tag tasktracker-frontend:${{ github.sha }} $ACR_SERVER/tasktracker-frontend:${{ github.sha }}
+          docker tag tasktracker-frontend:${{ github.sha }} $ACR_SERVER/tasktracker-frontend:latest
+          docker push $ACR_SERVER/tasktracker-frontend:${{ github.sha }}
+          docker push $ACR_SERVER/tasktracker-frontend:latest
+
+      - name: Get Container App Names
+        id: apps
+        run: |
+          BACKEND_APP=$(az containerapp list --resource-group rg-wcdev --query "[?contains(name, 'backend')].name | [0]" -o tsv)
+          FRONTEND_APP=$(az containerapp list --resource-group rg-wcdev --query "[?contains(name, 'frontend')].name | [0]" -o tsv)
+          
+          if [ -z "$BACKEND_APP" ]; then
+            echo "❌ Backend Container App not found in rg-wcdev"
+            exit 1
+          fi
+          
+          if [ -z "$FRONTEND_APP" ]; then
+            echo "❌ Frontend Container App not found in rg-wcdev"
+            exit 1
+          fi
+          
+          echo "backend-app=$BACKEND_APP" >> $GITHUB_OUTPUT
+          echo "frontend-app=$FRONTEND_APP" >> $GITHUB_OUTPUT
+          echo "✅ Found Container Apps: $BACKEND_APP, $FRONTEND_APP"
+
+      - name: Deploy Backend to Container App
+        run: |
+          ACR_SERVER="${{ steps.acr.outputs.registry-name }}.azurecr.io"
+          
+          az containerapp update \
+            --name ${{ steps.apps.outputs.backend-app }} \
+            --resource-group rg-wcdev \
+            --image $ACR_SERVER/tasktracker-backend:${{ github.sha }}
+
+      - name: Deploy Frontend to Container App
+        run: |
+          ACR_SERVER="${{ steps.acr.outputs.registry-name }}.azurecr.io"
+          
+          az containerapp update \
+            --name ${{ steps.apps.outputs.frontend-app }} \
+            --resource-group rg-wcdev \
+            --image $ACR_SERVER/tasktracker-frontend:${{ github.sha }}
+
+      - name: Get Application URLs
+        run: |
+          BACKEND_URL=$(az containerapp show --name ${{ steps.apps.outputs.backend-app }} --resource-group rg-wcdev --query properties.configuration.ingress.fqdn -o tsv)
+          FRONTEND_URL=$(az containerapp show --name ${{ steps.apps.outputs.frontend-app }} --resource-group rg-wcdev --query properties.configuration.ingress.fqdn -o tsv)
+          
+          echo "### 🚀 Deployment Complete (DEV)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Backend URL:** https://$BACKEND_URL" >> $GITHUB_STEP_SUMMARY
+          echo "**Frontend URL:** https://$FRONTEND_URL" >> $GITHUB_STEP_SUMMARY
+          echo "**Resource Group:** rg-wcdev" >> $GITHUB_STEP_SUMMARY
+
+  deploy-staging:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: staging
+    if: github.ref == 'refs/heads/staging' || github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'staging'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download Backend Image
+        uses: actions/download-artifact@v4
+        with:
+          name: backend-image
+          path: /tmp
+
+      - name: Download Frontend Image
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-image
+          path: /tmp
+
+      - name: Load Docker Images
+        run: |
+          docker load --input /tmp/backend-image.tar
+          docker load --input /tmp/frontend-image.tar
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Get Azure Container Registry Name
+        id: acr
+        run: |
+          ACR_NAME=$(az acr list --resource-group rg-wcstaging --query "[0].name" -o tsv)
+          if [ -z "$ACR_NAME" ]; then
+            echo "❌ No Azure Container Registry found in rg-wcstaging"
+            exit 1
+          fi
+          echo "registry-name=$ACR_NAME" >> $GITHUB_OUTPUT
+          echo "✅ Found ACR: $ACR_NAME"
+
+      - name: Azure Container Registry Login
+        run: |
+          az acr login --name ${{ steps.acr.outputs.registry-name }}
+
+      - name: Tag and Push Images to ACR
+        run: |
+          ACR_SERVER="${{ steps.acr.outputs.registry-name }}.azurecr.io"
+          
+          # Tag and push backend
+          docker tag tasktracker-backend:${{ github.sha }} $ACR_SERVER/tasktracker-backend:${{ github.sha }}
+          docker tag tasktracker-backend:${{ github.sha }} $ACR_SERVER/tasktracker-backend:staging-latest
+          docker push $ACR_SERVER/tasktracker-backend:${{ github.sha }}
+          docker push $ACR_SERVER/tasktracker-backend:staging-latest
+          
+          # Tag and push frontend
+          docker tag tasktracker-frontend:${{ github.sha }} $ACR_SERVER/tasktracker-frontend:${{ github.sha }}
+          docker tag tasktracker-frontend:${{ github.sha }} $ACR_SERVER/tasktracker-frontend:staging-latest
+          docker push $ACR_SERVER/tasktracker-frontend:${{ github.sha }}
+          docker push $ACR_SERVER/tasktracker-frontend:staging-latest
+
+      - name: Get Container App Names
+        id: apps
+        run: |
+          BACKEND_APP=$(az containerapp list --resource-group rg-wcstaging --query "[?contains(name, 'backend')].name | [0]" -o tsv)
+          FRONTEND_APP=$(az containerapp list --resource-group rg-wcstaging --query "[?contains(name, 'frontend')].name | [0]" -o tsv)
+          
+          if [ -z "$BACKEND_APP" ]; then
+            echo "❌ Backend Container App not found in rg-wcstaging"
+            exit 1
+          fi
+          
+          if [ -z "$FRONTEND_APP" ]; then
+            echo "❌ Frontend Container App not found in rg-wcstaging"
+            exit 1
+          fi
+          
+          echo "backend-app=$BACKEND_APP" >> $GITHUB_OUTPUT
+          echo "frontend-app=$FRONTEND_APP" >> $GITHUB_OUTPUT
+          echo "✅ Found Container Apps: $BACKEND_APP, $FRONTEND_APP"
+
+      - name: Deploy Backend to Container App
+        run: |
+          ACR_SERVER="${{ steps.acr.outputs.registry-name }}.azurecr.io"
+          
+          az containerapp update \
+            --name ${{ steps.apps.outputs.backend-app }} \
+            --resource-group rg-wcstaging \
+            --image $ACR_SERVER/tasktracker-backend:${{ github.sha }}
+
+      - name: Deploy Frontend to Container App
+        run: |
+          ACR_SERVER="${{ steps.acr.outputs.registry-name }}.azurecr.io"
+          
+          az containerapp update \
+            --name ${{ steps.apps.outputs.frontend-app }} \
+            --resource-group rg-wcstaging \
+            --image $ACR_SERVER/tasktracker-frontend:${{ github.sha }}
+
+      - name: Get Application URLs
+        run: |
+          BACKEND_URL=$(az containerapp show --name ${{ steps.apps.outputs.backend-app }} --resource-group rg-wcstaging --query properties.configuration.ingress.fqdn -o tsv)
+          FRONTEND_URL=$(az containerapp show --name ${{ steps.apps.outputs.frontend-app }} --resource-group rg-wcstaging --query properties.configuration.ingress.fqdn -o tsv)
+          
+          echo "### 🚀 Deployment Complete (STAGING)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Backend URL:** https://$BACKEND_URL" >> $GITHUB_STEP_SUMMARY
+          echo "**Frontend URL:** https://$FRONTEND_URL" >> $GITHUB_STEP_SUMMARY
+          echo "**Resource Group:** rg-wcstaging" >> $GITHUB_STEP_SUMMARY
+
+  deploy-production:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: production
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'production'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download Backend Image
+        uses: actions/download-artifact@v4
+        with:
+          name: backend-image
+          path: /tmp
+
+      - name: Download Frontend Image
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-image
+          path: /tmp
+
+      - name: Load Docker Images
+        run: |
+          docker load --input /tmp/backend-image.tar
+          docker load --input /tmp/frontend-image.tar
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Get Azure Container Registry Name
+        id: acr
+        run: |
+          ACR_NAME=$(az acr list --resource-group rg-wcproduction --query "[0].name" -o tsv)
+          if [ -z "$ACR_NAME" ]; then
+            echo "❌ No Azure Container Registry found in rg-wcproduction"
+            exit 1
+          fi
+          echo "registry-name=$ACR_NAME" >> $GITHUB_OUTPUT
+          echo "✅ Found ACR: $ACR_NAME"
+
+      - name: Azure Container Registry Login
+        run: |
+          az acr login --name ${{ steps.acr.outputs.registry-name }}
+
+      - name: Tag and Push Images to ACR
+        run: |
+          ACR_SERVER="${{ steps.acr.outputs.registry-name }}.azurecr.io"
+          
+          # Tag and push backend
+          docker tag tasktracker-backend:${{ github.sha }} $ACR_SERVER/tasktracker-backend:${{ github.sha }}
+          docker tag tasktracker-backend:${{ github.sha }} $ACR_SERVER/tasktracker-backend:production-latest
+          docker push $ACR_SERVER/tasktracker-backend:${{ github.sha }}
+          docker push $ACR_SERVER/tasktracker-backend:production-latest
+          
+          # Tag and push frontend
+          docker tag tasktracker-frontend:${{ github.sha }} $ACR_SERVER/tasktracker-frontend:${{ github.sha }}
+          docker tag tasktracker-frontend:${{ github.sha }} $ACR_SERVER/tasktracker-frontend:production-latest
+          docker push $ACR_SERVER/tasktracker-frontend:${{ github.sha }}
+          docker push $ACR_SERVER/tasktracker-frontend:production-latest
+
+      - name: Get Container App Names
+        id: apps
+        run: |
+          BACKEND_APP=$(az containerapp list --resource-group rg-wcproduction --query "[?contains(name, 'backend')].name | [0]" -o tsv)
+          FRONTEND_APP=$(az containerapp list --resource-group rg-wcproduction --query "[?contains(name, 'frontend')].name | [0]" -o tsv)
+          
+          if [ -z "$BACKEND_APP" ]; then
+            echo "❌ Backend Container App not found in rg-wcproduction"
+            exit 1
+          fi
+          
+          if [ -z "$FRONTEND_APP" ]; then
+            echo "❌ Frontend Container App not found in rg-wcproduction"
+            exit 1
+          fi
+          
+          echo "backend-app=$BACKEND_APP" >> $GITHUB_OUTPUT
+          echo "frontend-app=$FRONTEND_APP" >> $GITHUB_OUTPUT
+          echo "✅ Found Container Apps: $BACKEND_APP, $FRONTEND_APP"
+
+      - name: Deploy Backend to Container App
+        run: |
+          ACR_SERVER="${{ steps.acr.outputs.registry-name }}.azurecr.io"
+          
+          az containerapp update \
+            --name ${{ steps.apps.outputs.backend-app }} \
+            --resource-group rg-wcproduction \
+            --image $ACR_SERVER/tasktracker-backend:${{ github.sha }}
+
+      - name: Deploy Frontend to Container App
+        run: |
+          ACR_SERVER="${{ steps.acr.outputs.registry-name }}.azurecr.io"
+          
+          az containerapp update \
+            --name ${{ steps.apps.outputs.frontend-app }} \
+            --resource-group rg-wcproduction \
+            --image $ACR_SERVER/tasktracker-frontend:${{ github.sha }}
+
+      - name: Get Application URLs
+        run: |
+          BACKEND_URL=$(az containerapp show --name ${{ steps.apps.outputs.backend-app }} --resource-group rg-wcproduction --query properties.configuration.ingress.fqdn -o tsv)
+          FRONTEND_URL=$(az containerapp show --name ${{ steps.apps.outputs.frontend-app }} --resource-group rg-wcproduction --query properties.configuration.ingress.fqdn -o tsv)
+          
+          echo "### 🚀 Deployment Complete (PRODUCTION)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Backend URL:** https://$BACKEND_URL" >> $GITHUB_STEP_SUMMARY
+          echo "**Frontend URL:** https://$FRONTEND_URL" >> $GITHUB_STEP_SUMMARY
+          echo "**Resource Group:** rg-wcproduction" >> $GITHUB_STEP_SUMMARY
