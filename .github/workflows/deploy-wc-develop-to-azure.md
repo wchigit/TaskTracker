@@ -51,11 +51,11 @@ The TaskTracker application consists of:
 
 ### Required GitHub Secrets
 
-This workflow requires the following secrets to be configured in the repository:
-- `AZURE_CREDENTIALS` - Azure service principal credentials in JSON format
-- `AZURE_SUBSCRIPTION_ID` - The Azure subscription ID (can use the one mentioned above)
+This workflow requires Azure authentication to be configured. The recommended approach is:
+- Set up Azure OIDC authentication for GitHub Actions (preferred for security)
+- Or configure service principal credentials as repository secrets
 
-To set up Azure credentials, follow Azure's documentation on creating a service principal and configuring GitHub secrets.
+The subscription ID (a4ab3025-1b32-4394-92e0-d07c1ebf3787) is provided as reference but should be validated during deployment.
 
 ## CI/CD Process
 
@@ -78,9 +78,8 @@ To set up Azure credentials, follow Azure's documentation on creating a service 
 ### Phase 2: Continuous Deployment (CD)
 
 3. **Deploy to Azure**:
-   - Check that required environment variables or GitHub Actions configuration includes Azure credentials
-   - Install Azure CLI if needed: `curl -sL https://aka.ms/InstallAzureCLIDeb | bash`
-   - Use Azure CLI to authenticate (credentials should be available through environment)
+   - Check for Azure CLI: `which az` or install via package manager: `curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash`
+   - Verify Azure authentication is configured (OIDC or service principal)
    - Use subscription ID: a4ab3025-1b32-4394-92e0-d07c1ebf3787
    - Deploy the Docker containers to Azure (use Azure Container Instances or Azure App Service)
    - Configure the following environment variables:
@@ -100,11 +99,11 @@ To set up Azure credentials, follow Azure's documentation on creating a service 
 ## Important Notes
 
 - Use the repository's existing Dockerfiles for building images
-- Azure credentials should be configured in the repository's environment or Actions settings
-- The workflow will need Azure authentication configured externally (e.g., via OIDC or service principal)
+- Azure authentication must be configured (OIDC recommended, or service principal via repository secrets)
+- The subscription ID is provided for reference and validation during deployment
 - Ensure all credentials are handled securely - never log or expose them in plain text
 - Provide clear, actionable feedback in deployment reports
-- If authentication fails, create an issue explaining the required Azure setup
+- If authentication is not configured, create an issue with setup instructions for Azure OIDC or service principal
 
 ## Error Handling
 
