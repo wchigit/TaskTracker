@@ -49,6 +49,14 @@ The TaskTracker application consists of:
 - **Subscription ID**: a4ab3025-1b32-4394-92e0-d07c1ebf3787
 - **Target Branch**: wc/develop
 
+### Required GitHub Secrets
+
+This workflow requires the following secrets to be configured in the repository:
+- `AZURE_CREDENTIALS` - Azure service principal credentials in JSON format
+- `AZURE_SUBSCRIPTION_ID` - The Azure subscription ID (can use the one mentioned above)
+
+To set up Azure credentials, follow Azure's documentation on creating a service principal and configuring GitHub secrets.
+
 ## CI/CD Process
 
 ### Phase 1: Continuous Integration (CI)
@@ -70,8 +78,9 @@ The TaskTracker application consists of:
 ### Phase 2: Continuous Deployment (CD)
 
 3. **Deploy to Azure**:
-   - Check if Azure CLI is available or needs to be installed
-   - Authenticate with Azure using the subscription ID
+   - Verify Azure credentials are available in GitHub secrets
+   - Use the AZURE_CREDENTIALS secret for authentication
+   - Use the AZURE_SUBSCRIPTION_ID secret (or the ID a4ab3025-1b32-4394-92e0-d07c1ebf3787)
    - Deploy the Docker containers to Azure (use Azure Container Instances or Azure App Service)
    - Configure the following environment variables:
      - Backend: `MONGO_URL` pointing to Azure-hosted MongoDB or MongoDB Atlas
@@ -90,9 +99,11 @@ The TaskTracker application consists of:
 ## Important Notes
 
 - Use the repository's existing Dockerfiles for building images
-- Ensure all secrets and credentials are handled securely
+- Azure credentials must be configured as GitHub secrets before deployment
+- Required secrets: `AZURE_CREDENTIALS` and `AZURE_SUBSCRIPTION_ID`
+- Ensure all secrets and credentials are handled securely - never log or expose them
 - Provide clear, actionable feedback in deployment reports
-- If Azure CLI is not available, provide instructions for manual deployment or using GitHub Actions secrets
+- If secrets are not configured, create an issue with setup instructions
 
 ## Error Handling
 
