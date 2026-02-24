@@ -1,0 +1,163 @@
+name: Deploy to Azure
+
+on:
+  push:
+    branches:
+      - wc/develop
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write  # Required for Azure OIDC authentication
+
+concurrency:
+  group: azure-deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  RESOURCE_GROUP: tasktracker-rg
+  ACR_NAME: tasktrackerregistry
+  BACKEND_IMAGE: tasktracker-backend
+  FRONTEND_IMAGE: tasktracker-frontend
+  BACKEND_CONTAINER_NAME: tasktracker-backend
+  FRONTEND_CONTAINER_NAME: tasktracker-frontend
+
+jobs:
+  ci-backend:
+    name: Backend CI
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Python dependencies
+        run: pip install --no-cache-dir -r backend/requirements.txt
+
+      - name: Validate imports
+        run: |
+          python -c "import fastapi, uvicorn, pydantic, pymongo; print('All imports OK')"
+        working-directory: backend
+
+      - name: Run backend tests
+        run: |
+          if find . -name "test_*.py" -o -name "*_test.py" | grep -q .; then
+            python -m pytest
+          else
+            echo "No test files found — skipping"
+          fi
+        working-directory: backend
+
+  ci-frontend:
+    name: Frontend CI
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install Node.js dependencies
+        run: npm install
+        working-directory: frontend
+
+      - name: Run frontend tests
+        run: |
+          if find src -name "*.test.*" -o -name "*.spec.*" 2>/dev/null | grep -q .; then
+            npm test -- --watchAll=false
+          else
+            echo "No test files found — skipping"
+          fi
+        working-directory: frontend
+
+      - name: Build production frontend
+        run: npm run build
+        working-directory: frontend
+        env:
+          CI: false
+
+  cd-azure:
+    name: Build and Deploy to Azure
+    runs-on: ubuntu-latest
+    needs: [ci-backend, ci-frontend]
+    environment: azure
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Get ACR login server
+        id: acr-info
+        run: |
+          LOGIN_SERVER=$(az acr show --name ${{ env.ACR_NAME }} --resource-group ${{ env.RESOURCE_GROUP }} --query loginServer -o tsv)
+          echo "login_server=$LOGIN_SERVER" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to Azure Container Registry
+        run: az acr login --name ${{ env.ACR_NAME }}
+
+      - name: Build and push backend Docker image
+        run: |
+          IMAGE="${{ steps.acr-info.outputs.login_server }}/${{ env.BACKEND_IMAGE }}:${{ github.sha }}"
+          docker build -t "$IMAGE" ./backend
+          docker push "$IMAGE"
+          echo "BACKEND_IMAGE_TAG=$IMAGE" >> "$GITHUB_ENV"
+
+      - name: Build and push frontend Docker image
+        run: |
+          IMAGE="${{ steps.acr-info.outputs.login_server }}/${{ env.FRONTEND_IMAGE }}:${{ github.sha }}"
+          docker build -f ./frontend/Dockerfile.prod -t "$IMAGE" ./frontend
+          docker push "$IMAGE"
+          echo "FRONTEND_IMAGE_TAG=$IMAGE" >> "$GITHUB_ENV"
+
+      - name: Deploy backend to Azure Container Instances
+        run: |
+          az container create \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --name ${{ env.BACKEND_CONTAINER_NAME }} \
+            --image "${{ env.BACKEND_IMAGE_TAG }}" \
+            --registry-login-server "${{ steps.acr-info.outputs.login_server }}" \
+            --registry-username "${{ secrets.ACR_USERNAME }}" \
+            --registry-password "${{ secrets.ACR_PASSWORD }}" \
+            --dns-name-label tasktracker-backend-${{ github.run_id }} \
+            --ports 80 \
+            --environment-variables MONGO_URL=${{ secrets.MONGO_URL }} \
+            --output table
+
+      - name: Deploy frontend to Azure Container Instances
+        run: |
+          az container create \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --name ${{ env.FRONTEND_CONTAINER_NAME }} \
+            --image "${{ env.FRONTEND_IMAGE_TAG }}" \
+            --registry-login-server "${{ steps.acr-info.outputs.login_server }}" \
+            --registry-username "${{ secrets.ACR_USERNAME }}" \
+            --registry-password "${{ secrets.ACR_PASSWORD }}" \
+            --dns-name-label tasktracker-frontend-${{ github.run_id }} \
+            --ports 80 \
+            --output table
+
+      - name: Report deployment success
+        run: |
+          echo "## Deployment Complete" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Item | Value |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Commit | \`${{ github.sha }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Backend image | \`${{ env.BACKEND_IMAGE_TAG }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Frontend image | \`${{ env.FRONTEND_IMAGE_TAG }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Resource group | \`${{ env.RESOURCE_GROUP }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Subscription | \`${{ secrets.AZURE_SUBSCRIPTION_ID }}\` |" >> "$GITHUB_STEP_SUMMARY"
