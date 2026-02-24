@@ -78,9 +78,11 @@ To set up Azure credentials, follow Azure's documentation on creating a service 
 ### Phase 2: Continuous Deployment (CD)
 
 3. **Deploy to Azure**:
-   - Verify Azure credentials are available in GitHub secrets
-   - Use the AZURE_CREDENTIALS secret for authentication
-   - Use the AZURE_SUBSCRIPTION_ID secret (or the ID a4ab3025-1b32-4394-92e0-d07c1ebf3787)
+   - Check that required GitHub secrets are configured:
+     - Access `${{ secrets.AZURE_CREDENTIALS }}` for Azure authentication
+     - Access `${{ secrets.AZURE_SUBSCRIPTION_ID }}` or use a4ab3025-1b32-4394-92e0-d07c1ebf3787
+   - Install Azure CLI if needed: `curl -sL https://aka.ms/InstallAzureCLIDeb | bash`
+   - Authenticate with Azure using the credentials from secrets
    - Deploy the Docker containers to Azure (use Azure Container Instances or Azure App Service)
    - Configure the following environment variables:
      - Backend: `MONGO_URL` pointing to Azure-hosted MongoDB or MongoDB Atlas
@@ -100,10 +102,11 @@ To set up Azure credentials, follow Azure's documentation on creating a service 
 
 - Use the repository's existing Dockerfiles for building images
 - Azure credentials must be configured as GitHub secrets before deployment
-- Required secrets: `AZURE_CREDENTIALS` and `AZURE_SUBSCRIPTION_ID`
-- Ensure all secrets and credentials are handled securely - never log or expose them
+- Access secrets using `${{ secrets.SECRET_NAME }}` syntax in bash commands
+- Required secrets: `AZURE_CREDENTIALS` (service principal JSON) and `AZURE_SUBSCRIPTION_ID`
+- Ensure all secrets and credentials are handled securely - never log or expose them in plain text
 - Provide clear, actionable feedback in deployment reports
-- If secrets are not configured, create an issue with setup instructions
+- If secrets are not configured, create an issue explaining how to set them up with Azure CLI commands
 
 ## Error Handling
 
