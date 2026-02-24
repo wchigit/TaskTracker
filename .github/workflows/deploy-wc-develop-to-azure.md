@@ -67,6 +67,7 @@ The subscription ID (a4ab3025-1b32-4394-92e0-d07c1ebf3787) is provided as refere
    - Run any backend tests if they exist (check for test files)
    - Lint the Python code if linting configuration exists
    - Build the backend Docker image
+   - Use ubuntu:latest as the base image for building the backend Docker container
 
 2. **Frontend CI**:
    - Navigate to `/frontend` directory
@@ -79,9 +80,9 @@ The subscription ID (a4ab3025-1b32-4394-92e0-d07c1ebf3787) is provided as refere
 
 3. **Deploy to Azure**:
    - Check for Azure CLI: `which az` or install via package manager: `curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash`
-   - Verify Azure authentication is configured (OIDC or service principal)
+   - Verify Azure authentication is configured (OIDC or service principal), use secrets.AZURE_CLIENT_ID, secrets.AZURE_TENANT_ID, secrets.AZURE_SUBSCRIPTION_ID for Azure login
    - Use subscription ID: a4ab3025-1b32-4394-92e0-d07c1ebf3787
-   - Deploy the Docker containers to Azure (use Azure Container Instances or Azure App Service)
+   - Deploy the Docker containers to Azure (use Azure Container Apps or Azure App Service)
    - Configure the following environment variables:
      - Backend: `MONGO_URL` pointing to Azure-hosted MongoDB or MongoDB Atlas
      - Frontend: `REACT_APP_API_URL` pointing to the deployed backend URL
